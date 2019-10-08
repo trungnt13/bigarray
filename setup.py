@@ -15,9 +15,7 @@ with open('README.md') as readme_file:
 
 author = 'Trung Ngo.T.'
 
-requirements = [
-    "numpy>=1.17.2",
-]
+requirements = ["numpy>=1.15.0", "six>=1.12.0"]
 
 setup(
     author=author,

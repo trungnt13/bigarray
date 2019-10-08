@@ -2,9 +2,10 @@ from __future__ import absolute_import, division, print_function
 
 import marshal
 import os
+import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
-from typing import Iterable, List, Text, Tuple, Union
+from typing import Iterable, List, Optional, Text, Tuple, Union
 
 import numpy as np
 from six import string_types
@@ -44,11 +45,8 @@ def read_mmaparray_header(path):
   """
   with open(path, mode='rb') as f:
     # ====== check header signature ====== #
-    try:
-      if f.read(len(_HEADER)) != _HEADER:
-        raise Exception
-    except Exception as e:
-      raise Exception('Invalid header for MmapData.')
+    if f.read(len(_HEADER)) != _HEADER:
+      raise ValueError('Invalid header for MmapData.')
     # ====== 8 bytes for size of info ====== #
     try:
       size = int(f.read(8))
@@ -87,7 +85,12 @@ class MmapArrayWriter(object):
   """
 
   def __new__(cls, path, *args, **kwargs):
-    path = os.path.abspath(path)
+    # an absolute path would give stronger identity
+    if isinstance(path, string_types):
+      path = os.path.abspath(path)
+    # file id is given
+    else:
+      raise ValueError("Only support file path, and not file descriptor ID")
     # Found old instance
     if path in _INSTANCES_WRITER:
       obj = _INSTANCES_WRITER[path]
@@ -104,34 +107,42 @@ class MmapArrayWriter(object):
 
   def __init__(self,
                path: Text,
-               shape: Tuple,
-               dtype: Union[Text, np.dtype] = 'float32',
+               shape: Optional[List[int]] = None,
+               dtype: Optional[Union[Text, np.dtype]] = None,
                remove_exist: bool = False):
     super(MmapArrayWriter, self).__init__()
-    assert isinstance(path, string_types), "path must be string or text."
-    # validate path
-    path = os.path.abspath(path)
-    # ====== remove exist ====== #
-    if remove_exist and os.path.exists(path):
-      if os.path.isfile(path):
-        os.remove(path)
-      else:
-        raise RuntimeError("Give path at '%s' is a folder, cannot remove!" %
-                           path)
-    # ====== check shape info ====== #
-    if not isinstance(shape, Iterable):
-      shape = (shape,)
-    shape = tuple([0 if i is None or i < 0 else int(i) for i in shape])
+    if isinstance(path, string_types):
+      # validate path
+      path = os.path.abspath(path)
+      # remove exist
+      if remove_exist and os.path.exists(path):
+        if os.path.isfile(path):
+          os.remove(path)
+        else:
+          raise RuntimeError("Give path at '%s' is a folder, cannot remove!" %
+                             path)
+    else:
+      raise ValueError("Only support file path, and not file descriptor ID")
     # ====== read exist file ====== #
-    if os.path.exists(path):
+    if os.path.exists(path) and os.stat(path).st_size > 0:
       dtype, shape = read_mmaparray_header(path)
       f = open(path, 'rb+')
+      self._start_position = shape[0]
     # ====== create new file ====== #
     else:
+      self._start_position = 0
       if dtype is None or shape is None:
         raise Exception("First created this MmapData, `dtype` and "
                         "`shape` must NOT be None.")
-      f = open(path, 'wb+')
+      # check shape info
+      if not isinstance(shape, Iterable):
+        shape = (shape,)
+      shape = tuple([0 if i is None or i < 0 else int(i) for i in shape])
+      # open the file
+      if isinstance(path, string_types):
+        f = open(path, 'wb+')
+      else:
+        f = os.fdopen(path, 'wb+')
       f.write(_HEADER)
       dtype = str(np.dtype(dtype))
       if isinstance(shape, np.ndarray):
@@ -148,7 +159,8 @@ class MmapArrayWriter(object):
       f.write(_)
     # ====== assign attributes ====== #
     self._file = f
-    self._path = path
+    self._path = path if isinstance(path, string_types) else \
+      f.name
     data = np.memmap(f,
                      dtype=dtype,
                      shape=shape,
@@ -184,6 +196,7 @@ class MmapArrayWriter(object):
     self._data._mmap.close()
     del self._data
     self._file.close()
+    del self._file
 
   def _resize(self, new_length):
     # ====== local files ====== #
@@ -221,9 +234,24 @@ class MmapArrayWriter(object):
     self._data = mmap
     return self
 
-  def write(self, arrays: Iterable):
+  def write(self, arrays: Iterable, start_position=None):
     """ Extending the memory-mapped data and copy the array
-    into extended area. """
+    into extended area.
+
+    Parameters
+    ----------
+    arrays : {`numpy.ndarray`, list of `numpy.ndarray`}
+      multiple arrays could be written to the file at once for optimizing
+      the performance.
+    start_position {`None`, `int`}
+      if `None`, appending the data to the `MmapArray`
+      if a positive integer is given, write the data start from given position
+      if a negative integer is given, write the data from `end - start_position`
+
+    Return
+    ------
+    `MmapArrayWriter` for method chaining
+    """
     if self.is_closed:
       raise RuntimeError("The MmapArrayWriter is closed!")
     # only get arrays matched the shape
@@ -242,20 +270,25 @@ class MmapArrayWriter(object):
                          "; but require array with shape: %s" %
                          (','.join([str(i.shape) for i in arrays]), self.shape))
     # ====== resize ====== #
-    old_size = self._data.shape[0]
-    # special case, Mmap is init with temporary size = 1 (all zeros),
-    # NOTE: risky to calculate sum of big array here
-    if old_size == 1 and \
-    sum(np.sum(np.abs(d[:])) for d in self._data) == 0.:
-      old_size = 0
-    # resize and append data
-    # resize only once will be faster
-    self._resize(old_size + add_size)
+    if start_position is None:
+      start_position = self._start_position
+      given_start_position = False
+    else:
+      start_position = int(start_position)
+      given_start_position = True
+      if start_position < 0:
+        start_position = self.shape[0] - start_position
+    add_length = add_size - (self.shape[0] - start_position)
+    # resize and append data (resize only once will be faster)
+    if add_length > 0:
+      self._resize(self.shape[0] + add_length)
     # ====== update values ====== #
     data = self._data
     for a in accepted_arrays:
-      data[old_size:old_size + a.shape[0]] = a
-      old_size += a.shape[0]
+      data[start_position:start_position + a.shape[0]] = a
+      start_position += a.shape[0]
+    if not given_start_position:
+      self._start_position = start_position
     return self
 
   def __enter__(self):
@@ -312,9 +345,13 @@ class MmapArray(np.memmap):
   """
 
   def __new__(subtype, path, mode='r+'):
-    path = os.path.abspath(path)
-    if not os.path.exists(path) and os.path.isfile(path):
-      raise ValueError('path must be existed file created by MmapArrayWriter.')
+    if isinstance(path, string_types):
+      path = os.path.abspath(path)
+      if not os.path.exists(path) and os.path.isfile(path):
+        raise ValueError(
+            'path must be existed file created by MmapArrayWriter.')
+    else:
+      raise ValueError("Only support file path, and not file descriptor ID")
     dtype, shape = read_mmaparray_header(path)
     offset = _aligned_memmap_offset(dtype)
     new_array = super(MmapArray, subtype).__new__(subtype=subtype,
