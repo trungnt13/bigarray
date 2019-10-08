@@ -38,7 +38,7 @@ def _fn_read(job):
 # ===========================================================================
 # Test cases
 # ===========================================================================
-class MmapArrayWriting(unittest.TestCase):
+class MmapArrayTest(unittest.TestCase):
 
   def test_write_single_time(self):
     fpath = _get_tempfile()
@@ -111,5 +111,8 @@ class MmapArrayWriting(unittest.TestCase):
         self.assertTrue(np.all(data == array[start:end]))
 
 
+# ===========================================================================
+# Main
+# ===========================================================================
 if __name__ == '__main__':
   unittest.main()

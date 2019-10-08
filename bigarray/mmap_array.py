@@ -20,6 +20,7 @@ __all__ = [
 MAX_OPEN_MMAP = 120
 _INSTANCES_WRITER = OrderedDict()
 _HEADER = b'mmapdata'
+_HEADER_SIZE_LENGTH = 8
 _MAXIMUM_HEADER_SIZE = 486
 
 
@@ -30,7 +31,7 @@ def get_total_opened_mmap():
   return len(_INSTANCES_WRITER)
 
 
-def read_mmaparray_header(path):
+def read_mmaparray_header(path, return_header_size=False):
   """ Reading header (if available) of a MmapArray
 
   Parameters
@@ -43,18 +44,27 @@ def read_mmaparray_header(path):
   dtype, shape
     Necessary information to create numpy.memmap
   """
+  header_size = 0
   with open(path, mode='rb') as f:
     # ====== check header signature ====== #
     if f.read(len(_HEADER)) != _HEADER:
       raise ValueError('Invalid header for MmapData.')
+    header_size += len(_HEADER)
     # ====== 8 bytes for size of info ====== #
     try:
-      size = int(f.read(8))
-      dtype, shape = marshal.loads(f.read(size))
+      size = f.read(_HEADER_SIZE_LENGTH)
+      header_size += len(size)
+
+      metadata = f.read(int(size))
+      header_size += len(metadata)
+
+      dtype, shape = marshal.loads(metadata)
     except Exception as e:
       f.close()
       raise Exception('Error reading memmap data file: %s' % str(e))
     # ====== return file object ====== #
+    if return_header_size:
+      return dtype, shape, header_size
     return dtype, shape
 
 
@@ -69,7 +79,7 @@ def _aligned_memmap_offset(dtype):
 # Writing new memory-mapped array
 # ===========================================================================
 class MmapArrayWriter(object):
-  """ Helper class for writing data to MmapArray, this class is singleton,
+  """ Helper class for writing data to `MmapArray`, this class is singleton,
   i.e. there are never two instance point to the same path
 
   Parameters
@@ -125,12 +135,14 @@ class MmapArrayWriter(object):
       raise ValueError("Only support file path, and not file descriptor ID")
     # ====== read exist file ====== #
     if os.path.exists(path) and os.stat(path).st_size > 0:
-      dtype, shape = read_mmaparray_header(path)
+      dtype, shape, self._header_size = read_mmaparray_header(
+          path, return_header_size=True)
       f = open(path, 'rb+')
       self._start_position = shape[0]
     # ====== create new file ====== #
     else:
       self._start_position = 0
+      self._header_size = 0
       if dtype is None or shape is None:
         raise Exception("First created this MmapData, `dtype` and "
                         "`shape` must NOT be None.")
@@ -139,24 +151,29 @@ class MmapArrayWriter(object):
         shape = (shape,)
       shape = tuple([0 if i is None or i < 0 else int(i) for i in shape])
       # open the file
-      if isinstance(path, string_types):
-        f = open(path, 'wb+')
-      else:
-        f = os.fdopen(path, 'wb+')
+      f = open(path, 'wb+')
       f.write(_HEADER)
+      self._header_size += len(_HEADER)
+      # save dtype and shape to the header
       dtype = str(np.dtype(dtype))
       if isinstance(shape, np.ndarray):
         shape = shape.tolist()
       if not isinstance(shape, (tuple, list)):
         shape = (shape,)
-      _ = marshal.dumps([dtype, shape])
-      size = len(_)
+      # write header metadata
+      # TODO: not a good solution, this could course overflow when expanding
+      # the memmap data, but if modifying the header algorithm,
+      # it is backward incompatible
+      header_meta = marshal.dumps([dtype, shape])
+      size = len(header_meta)
       if size > _MAXIMUM_HEADER_SIZE:
         raise Exception('The size of header excess maximum allowed size '
                         '(%d bytes).' % _MAXIMUM_HEADER_SIZE)
-      size = '%8d' % size
-      f.write(size.encode())
-      f.write(_)
+      header_length = ('%8d' % size).encode()
+      f.write(header_length)
+      self._header_size += len(header_length)
+      f.write(header_meta)
+      self._header_size += len(header_meta)
     # ====== assign attributes ====== #
     self._file = f
     self._path = path if isinstance(path, string_types) else \
@@ -168,6 +185,11 @@ class MmapArrayWriter(object):
                      offset=_aligned_memmap_offset(dtype))
     self._data = data
     self._is_closed = False
+
+  @property
+  def filesize(self):
+    """ Return the size of the mmap file in bytes """
+    return os.stat(self.path).st_size
 
   @property
   def shape(self):
@@ -258,8 +280,8 @@ class MmapArrayWriter(object):
     add_size = 0
     if not isinstance(arrays, Iterable) or isinstance(arrays, np.ndarray):
       arrays = (arrays,)
-    accepted_arrays = []
     # ====== check if shape[1:] matching ====== #
+    accepted_arrays = []
     for a in arrays:
       if a.shape[1:] == self._data.shape[1:]:
         accepted_arrays.append(a)
@@ -366,3 +388,8 @@ class MmapArray(np.memmap):
   @property
   def path(self):
     return self._path
+
+  @property
+  def filesize(self):
+    """ Return the size of the mmap file in bytes """
+    return os.stat(self.path).st_size
