@@ -22,7 +22,7 @@ setup(
     author_email='trung@imito.ai',
     classifiers=[
         'Development Status :: 4 - Beta',
-        'License :: OSI Approved :: Apache License',
+        'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
@@ -47,7 +47,7 @@ setup(
     long_description_content_type='text/markdown',
     setup_requires=['pip>=19.0'],
     install_requires=requirements,
-    license="Apache license",
+    license="Apache License 2.0",
     include_package_data=True,
     keywords='bigarray',
     name='bigarray',
