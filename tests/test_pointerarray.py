@@ -38,6 +38,12 @@ def _fn_write(job):
   WRITER.write(arrays, start_position=start_position)
 
 
+def _fn_write2(job):
+  writer, arrays = job
+  start_position = min(np.min(i) for i in arrays.values())
+  writer.write(arrays, start_position=start_position)
+
+
 def _fn_read(job):
   names, path = job
   x = PointerArray(path)
@@ -128,6 +134,50 @@ class PointerArrayTest(unittest.TestCase):
         self.assertTrue(
             all(np.all(dat == all_data[name]) for name, dat in data.items()))
     _del_file(path)
+
+  def test_pickling(self):
+    path = _get_tempfile()
+
+    f = PointerArrayWriter(path, shape=(0,), dtype='float64', remove_exist=True)
+    f.write({
+        'name0': np.arange(0, 10),
+        'name1': np.arange(10, 20),
+    })
+
+    f1 = pickle.loads(pickle.dumps(f))
+    f1.write({
+        'name2': np.arange(20, 30),
+        'name3': np.arange(30, 40),
+    })
+    # the order is important, if `f` flush later, the order will change
+    f.flush()
+    f1.flush()
+
+    x = PointerArray(path)
+    self.assertTrue(np.all(x['name0'] == np.arange(0, 10)))
+    self.assertTrue(np.all(x['name3'] == np.arange(30, 40)))
+
+  def test_pickling_multiprocessing(self):
+    path = _get_tempfile()
+    f = PointerArrayWriter(path,
+                           shape=(25 * 10,),
+                           dtype='float64',
+                           remove_exist=True)
+
+    jobs = [("name%d" % i, np.arange(i * 10, i * 10 + 10)) for i in range(25)]
+    all_data = {name: dat for name, dat in jobs}
+    jobs = [
+        (f, {name: dat for name, dat in j}) for j in np.array_split(jobs, 4)
+    ]
+    with Pool(2) as p:
+      p.map(_fn_write2, jobs)
+    f.flush()
+    f.close()
+
+    x = PointerArray(path)
+    for name in x.indices:
+      self.assertTrue(np.all(x[name] == all_data[name]))
+    self.assertTrue(np.sum(x) == sum(np.sum(val) for val in all_data.values()))
 
 
 # ===========================================================================

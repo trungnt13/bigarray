@@ -5,7 +5,7 @@ import sys
 import pip
 from setuptools import find_packages, setup
 
-_BIGARRAY_VERSION = '0.2.0'
+_BIGARRAY_VERSION = '0.2.1'
 
 # ===========================================================================
 # Main

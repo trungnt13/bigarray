@@ -4,6 +4,7 @@ import os
 import pickle
 from collections import OrderedDict
 from multiprocessing import Lock, Manager, Value
+from multiprocessing.managers import DictProxy
 from typing import Dict, Iterable, List, Optional, Text, Tuple, Union
 
 import numpy as np
@@ -13,6 +14,9 @@ from bigarray.mmap_array import (_HEADER, _MAXIMUM_HEADER_SIZE, MmapArray,
                                  MmapArrayWriter)
 
 __all__ = ['PointerArrayWriter', 'PointerArray']
+
+_MANAGER = []
+_PROXY_DICT = {}
 
 
 # ===========================================================================
@@ -38,32 +42,38 @@ class _ReadOnlyDict(dict):
 class _SharedDictWriter(object):
   """ A multiprocessing syncrhonized dictionary for writing """
 
-  def __init__(self, d):
-    assert isinstance(d, dict)
-    self._manager = Manager()
-    self._dict = self._manager.dict(d)
+  def __init__(self, init_dict, path):
+    assert isinstance(init_dict, dict)
+    if len(_MANAGER) == 0:
+      _MANAGER.append(Manager())
+    if path not in _PROXY_DICT:
+      _PROXY_DICT[path] = _MANAGER[0].dict(init_dict)
+      # TODO: is there any case that the `init_dict` contents mismatch
+      # the one stored in _PROXY_DICT
+    self._dict = _PROXY_DICT[path]
+    self._path = path
     self._lock = Lock()
-    self._main_pid = os.getpid()
-    self._is_multiprocessing = Value('i', 0)
+    self._pid = os.getpid()
+    self._is_closed = False
 
   def update(self, items):
     with self._lock:
-      if os.getpid() != self._main_pid:
-        self._is_multiprocessing.value += 1
       self._dict.update(items)
 
   @property
-  def values(self):
+  def values(self) -> DictProxy:
     with self._lock:
       return self._dict
 
   def dispose(self):
-    with self._lock:
-      if self._is_multiprocessing.value > 0:
-        pass
-    del self._manager
+    if self._is_closed:
+      return
+
+    self._is_closed = True
     del self._lock
     del self._dict
+    if self._path in _PROXY_DICT:
+      del _PROXY_DICT[self._path]
 
 
 # ===========================================================================
@@ -87,21 +97,22 @@ class PointerArrayWriter(MmapArrayWriter):
     data type
   remove_exist : boolean (default=False)
     if file at given path exists, remove it
+
+  Note
+  ----
+  All changes won't be saved until you call `PointerArrayWriter.flush`
   """
 
-  def __init__(self,
-               path: Text,
-               shape: Optional[List[int]] = None,
-               dtype: Optional[Union[Text, np.dtype]] = None,
-               remove_exist: bool = False):
-    super(PointerArrayWriter, self).__init__(path=path,
-                                             shape=shape,
-                                             dtype=dtype,
-                                             remove_exist=remove_exist)
+  def _init(self, path, shape, dtype, remove_exist, indices=None):
+    super(PointerArrayWriter, self)._init(path, shape, dtype, remove_exist)
     self._is_indices_saved = False
+    if indices is not None:
+      self._indices = _SharedDictWriter(indices, self.path)
+      return
+
     # first time create the file
     if self._start_position == 0 or self.shape[0] == 0:
-      self._indices = _SharedDictWriter(OrderedDict())
+      self._indices = _SharedDictWriter(OrderedDict(), self.path)
     # MmapArray already existed
     else:
       cur_pos = self._file.tell()
@@ -110,8 +121,15 @@ class PointerArrayWriter(MmapArrayWriter):
       indices_size = int.from_bytes(self._file.read(8), 'big')
       self._file.seek(filesize - 8 - indices_size)
       self._indices = _SharedDictWriter(
-          pickle.loads(self._file.read(indices_size)))
+          pickle.loads(self._file.read(indices_size)), self.path)
       self._file.seek(cur_pos)
+
+  def __getstate__(self):
+    return self.path, self.shape, self.dtype, dict(self._indices.values)
+
+  def __setstate__(self, states):
+    path, shape, dtype, indices = states
+    self._init(path, shape, dtype, remove_exist=False, indices=indices)
 
   @property
   def indices(self):
@@ -167,21 +185,26 @@ class PointerArrayWriter(MmapArrayWriter):
     return super(PointerArrayWriter, self).write(accepted_arrays,
                                                  start_position)
 
-  def _flush_indices(self):
-    if self.is_closed or self._is_indices_saved:
+  def flush(self):
+    super(PointerArrayWriter, self).flush()
+    if self._is_indices_saved:
       return
     self._is_indices_saved = True
-    with open(self.path, 'ab') as f:
+
+    try:  # skip if the manager is already closed
       indices = dict(self._indices.values)
+    except FileNotFoundError:
+      return
+
+    with open(self.path, 'ab') as f:
       indices_data = pickle.dumps(indices)
       size = len(indices_data).to_bytes(8, 'big')
       f.write(indices_data + size)
+    return self
 
   def close(self):
-    self._flush_indices()
-    if not self.is_closed:
-      self._indices.dispose()
     super(PointerArrayWriter, self).close()
+    self._indices.dispose()
 
 
 class PointerArray(MmapArray):

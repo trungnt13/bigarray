@@ -92,9 +92,17 @@ class MmapArrayWriter(object):
     data type
   remove_exist : boolean (default=False)
     if file at given path exists, remove it
+
+  Note
+  ----
+  All changes won't be saved until you call `MmapArrayWriter.flush`
   """
 
-  def __new__(cls, path, *args, **kwargs):
+  def __new__(cls, path=None, *args, **kwargs):
+    # ====== from pickling ====== #
+    if path is None:
+      return super(MmapArrayWriter, cls).__new__(cls)
+    # ====== normal initialization ====== #
     # an absolute path would give stronger identity
     if isinstance(path, string_types):
       path = os.path.abspath(path)
@@ -121,6 +129,9 @@ class MmapArrayWriter(object):
                dtype: Optional[Union[Text, np.dtype]] = None,
                remove_exist: bool = False):
     super(MmapArrayWriter, self).__init__()
+    self._init(path, shape, dtype, remove_exist)
+
+  def _init(self, path, shape, dtype, remove_exist):
     if isinstance(path, string_types):
       # validate path
       path = os.path.abspath(path)
@@ -187,10 +198,10 @@ class MmapArrayWriter(object):
     self._is_closed = False
 
   def __getstate__(self):
-    raise NotImplementedError
+    return self.path, self.shape, self.dtype
 
   def __setstate__(self, states):
-    raise NotImplementedError
+    return self._init(*states, remove_exist=False)
 
   @property
   def filesize(self):
@@ -202,29 +213,16 @@ class MmapArrayWriter(object):
     return self._data.shape
 
   @property
+  def dtype(self):
+    return self._data.dtype
+
+  @property
   def path(self):
     return self._path
 
   @property
   def is_closed(self):
     return self._is_closed
-
-  def flush(self):
-    self._data.flush()
-
-  def close(self):
-    if self.is_closed:
-      return
-    self._is_closed = True
-    if self.path in _INSTANCES_WRITER:
-      del _INSTANCES_WRITER[self.path]
-    # flush in read-write mode
-    self.flush()
-    # close mmap and file
-    self._data._mmap.close()
-    del self._data
-    self._file.close()
-    del self._file
 
   def _resize(self, new_length):
     # ====== local files ====== #
@@ -323,7 +321,26 @@ class MmapArrayWriter(object):
     return self
 
   def __exit__(self, *exc):
+    self.flush()
     self.close()
+
+  def flush(self):
+    self._data.flush()
+
+  def close(self):
+    if self.is_closed:
+      return
+    self._is_closed = True
+
+    if self.path in _INSTANCES_WRITER:
+      del _INSTANCES_WRITER[self.path]
+    # flush in read-write mode
+    self.flush()
+    # close mmap and file
+    self._data._mmap.close()
+    del self._data
+    self._file.close()
+    del self._file
 
   def __del__(self):
     self.close()

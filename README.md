@@ -40,39 +40,66 @@ Iterate Memmap (2nd) : 0.011325995903462172 s
 ## Example
 
 ```python
+from multiprocessing import Pool
+
 import numpy as np
 
 from bigarray import PointerArray, PointerArrayWriter
 
-with PointerArrayWriter('/tmp/array',
-                        shape=(0,),
-                        dtype='float64',
-                        remove_exist=True) as f:
-  # NOTE: this write method support multiprocessing write
-  # (use different `start_position` for multiprocessing)
-  f.write({
-      'name0': np.arange(0, 10),
-      'name1': np.arange(10, 20),
-  },
-          start_position=0)
+n = 80 * 10  # total number of samples
+jobs = [(i, i + 10) for i in range(0, n // 10, 10)]
+path = '/tmp/array'
 
-x = PointerArray('/tmp/array')
-print(x)
+# ====== Multiprocessing writing ====== #
+writer = PointerArrayWriter(path, shape=(n,), dtype='int32', remove_exist=True)
 
-for name, (start, end) in x.indices.items():
-  print(name, start, end, x[start:end])
 
+def fn_write(job):
+  start, end = job
+  # it is crucial to write at different position for different process
+  writer.write(
+      {"name%i" % i: np.arange(i * 10, i * 10 + 10) for i in range(start, end)},
+      start_position=start * 10)
+
+
+# using 2 processes to generate and write data
+with Pool(2) as p:
+  p.map(fn_write, jobs)
+writer.flush()
+writer.close()
+
+# ====== Multiprocessing reading ====== #
+x = PointerArray(path)
+print(x['name0'])
+print(x['name66'])
+print(x['name78'])
+
+# normal indexing
+for name, (s, e) in x.indices.items():
+  data = x[s:e]
 # fast indexing
 for name in x.indices:
-  print(name, x[name])
+  data = x[name]
+
+
+# multiprocess indexing
+def fn_read(job):
+  start, end = job
+  total = 0
+  for i in range(start, end):
+    total += np.sum(x['name%d' % i])
+  return total
+
+# use multiprocessing to calculate the sum of all arrays
+with Pool(2) as p:
+  total_sum = sum(p.map(fn_read, jobs))
+print(np.sum(x), total_sum)
 ```
 
 Output:
 ```
-[ 0.  1.  2.  3.  4.  5.  6.  7.  8.  9. 10. 11. 12. 13. 14. 15. 16. 17.
- 18. 19.]
-name0 0 10 [0. 1. 2. 3. 4. 5. 6. 7. 8. 9.]
-name1 10 20 [10. 11. 12. 13. 14. 15. 16. 17. 18. 19.]
-name0 [0. 1. 2. 3. 4. 5. 6. 7. 8. 9.]
-name1 [10. 11. 12. 13. 14. 15. 16. 17. 18. 19.]
+[0 1 2 3 4 5 6 7 8 9]
+[660 661 662 663 664 665 666 667 668 669]
+[780 781 782 783 784 785 786 787 788 789]
+319600 319600
 ```
