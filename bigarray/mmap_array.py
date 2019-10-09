@@ -186,6 +186,12 @@ class MmapArrayWriter(object):
     self._data = data
     self._is_closed = False
 
+  def __getstate__(self):
+    raise NotImplementedError
+
+  def __setstate__(self, states):
+    raise NotImplementedError
+
   @property
   def filesize(self):
     """ Return the size of the mmap file in bytes """
