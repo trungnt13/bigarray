@@ -10,9 +10,9 @@ Nightly build from github:
 ---
 ## The three principles
 
-* *Transparency*: everything is `numpy.array`, metadata and support for extra features (e.g. multiprocessing, indexing, etc) are subtly implemented in the _background_.
-* *Pragmatism*: fast but easy, simplified A.P.I for common use cases
-* *Focus*: _"Do one thing and do it well"_
+* **Transparency**: everything is `numpy.array`, metadata and support for extra features (e.g. multiprocessing, indexing, etc) are subtly implemented in the _background_.
+* **Pragmatism**: fast but easy, simplified A.P.I for common use cases
+* **Focus**: _"Do one thing and do it well"_
 
 ## The benchmarks
 
