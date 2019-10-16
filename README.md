@@ -16,36 +16,39 @@ Nightly build from github:
 
 ## The benchmarks
 
-About **642 times faster** than HDF5 data
+About **535 times faster** than HDF5 data (using `h5py`) and **223 times faster** than normal `numpy.array`
 [The detail benchmark code](https://github.com/trungnt13/bigarray/blob/master/benchmarks/mmap_vs_hdf5.py)
 ```
 Array size: 1220.70 (MB)
 
-Create HDF5   in: 0.000555661041289568 s
-Create Memmap in: 0.0006158510223031044 s
+Create HDF5   in: 0.0005580571014434099 s
+Create Memmap in: 0.000615391880273819 s
 
-Numpy save in: 0.5667706369422376 s
-Writing data to HDF5  : 0.5509818319696933 s
-Writing data to Memmap: 0.7097681048326194 s
+Numpy save in: 0.5713834380730987 s
+Writing data to HDF5  : 0.5530977640300989 s
+Writing data to Memmap: 0.7038380969315767 s
 
 Numpy saved size: 1220.70 (MB)
 HDF5 saved size: 1220.71 (MB)
 Mmap saved size: 1220.70 (MB)
 
-Load Numpy array: 0.39080040203407407 s
-Load HDF5 data  : 0.0004069809801876545 s
-Load Memmap data: 0.00017367699183523655 s
+Load Numpy array: 0.3723734531085938 s
+Load HDF5 data  : 0.00041177100501954556 s
+Load Memmap data: 0.00017150305211544037 s
 
 Test correctness of stored data
 Numpy : True
 HDF5  : True
 Memmap: True
 
-Iterate Numpy data   : 0.00017111608758568764 s
-Iterate HDF5 data    : 0.9016428589820862 s
-Iterate Memmap data  : 0.0014329389669001102 s
-Iterate Memmap (2nd) : 0.0011947308667004108 s
+Iterate Numpy data   : 0.00020254682749509811 s
+Iterate HDF5 data    : 0.8945782391820103 s
+Iterate Memmap data  : 0.0014937107916921377 s
+Iterate Memmap (2nd) : 0.0011746759992092848 s
 
+Numpy total time (open+iter): 0.3725759999360889 s
+H5py  total time (open+iter): 0.8949900101870298 s
+**Mmap  total time (open+iter): 0.001665213843807578 s**
 ```
 
 ## Example

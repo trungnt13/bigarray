@@ -63,15 +63,18 @@ print()
 start = timeit.default_timer()
 with open(numpy_path, 'rb') as f:
   y = np.load(f)
-print('Load Numpy array:', timeit.default_timer() - start, 's')
+numpy_open_time = timeit.default_timer() - start
+print('Load Numpy array:', numpy_open_time, 's')
 
 start = timeit.default_timer()
 hdf5 = h5py.File(hdf5_path, 'r')
-print('Load HDF5 data  :', timeit.default_timer() - start, 's')
+h5py_open_time = timeit.default_timer() - start
+print('Load HDF5 data  :', h5py_open_time, 's')
 
 start = timeit.default_timer()
 mmap = MmapArray(mmap_path)
-print('Load Memmap data:', timeit.default_timer() - start, 's')
+mmap_open_time = timeit.default_timer() - start
+print('Load Memmap data:', mmap_open_time, 's')
 
 print()
 print('Test correctness of stored data')
@@ -85,20 +88,23 @@ start = timeit.default_timer()
 for epoch in range(0, 3):
   for i in range(0, N, 256):
     x = X[i:i + 256]
-print('Iterate Numpy data   :', timeit.default_timer() - start, 's')
+numpy_iter_time = timeit.default_timer() - start
+print('Iterate Numpy data   :', numpy_iter_time, 's')
 
 start = timeit.default_timer()
 dat = hdf5['X']
 for epoch in range(0, 3):
   for i in range(0, N, 256):
     x = dat[i:i + 256]
-print('Iterate HDF5 data    :', timeit.default_timer() - start, 's')
+h5py_iter_time = timeit.default_timer() - start
+print('Iterate HDF5 data    :', h5py_iter_time, 's')
 
 start = timeit.default_timer()
 for epoch in range(0, 3):
   for i in range(0, N, 256):
     x = mmap[i:i + 256]
-print('Iterate Memmap data  :', timeit.default_timer() - start, 's')
+mmap_iter_time = timeit.default_timer() - start
+print('Iterate Memmap data  :', mmap_iter_time, 's')
 
 start = timeit.default_timer()
 for epoch in range(0, 3):
@@ -106,9 +112,16 @@ for epoch in range(0, 3):
     x = mmap[i:i + 256]
 print('Iterate Memmap (2nd) :', timeit.default_timer() - start, 's')
 
+# ====== summary ====== #
+print()
+print('Numpy total time (open+iter):', numpy_open_time + numpy_iter_time, 's')
+print('H5py  total time (open+iter):', h5py_open_time + h5py_iter_time, 's')
+print('Mmap  total time (open+iter):', mmap_open_time + mmap_iter_time, 's')
+
 # ===========================================================================
 # Clean-up
 # ===========================================================================
+
 if os.path.exists(numpy_path):
   os.remove(numpy_path)
 if os.path.exists(hdf5_path):
